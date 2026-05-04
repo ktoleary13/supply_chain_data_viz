@@ -17,7 +17,7 @@ Two sheets from `data/restaurant_supply_chain_dashboard.xlsx`:
 - **Incidents** — 5,000 rows × 18 columns (case details, financial impact, SLA, vendor, root cause …)
 - **Workers** — 60 rows × 6 columns (employee ID, job title, team, region, tenure)
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 supply-chain-dashboard/
