@@ -27,10 +27,3 @@ supply-chain-dashboard/
 └── data/
     └── restaurant_supply_chain_dashboard.xlsx # Source dataset
 ```
-
-## 🛠️ Tech Stack
-
-- [Streamlit](https://streamlit.io/) — app framework
-- [Plotly](https://plotly.com/python/) — interactive charts
-- [Pandas](https://pandas.pydata.org/) — data wrangling
-- [openpyxl](https://openpyxl.readthedocs.io/) — Excel reading
