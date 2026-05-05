@@ -4,111 +4,67 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-st.set_page_config(
-    page_title="Supply Chain Incident Breakdown",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
+st.set_page_config(page_title="Supply Chain Incidents", layout="wide")
 
-# ── Palette ───────────────────────────────────────────────────────────────────
-BLUE  = "#0078AC"
-RED   = "#D2112C"
-RED2  = "#E61838"
-WHITE = "#FFFFFF"
+# ── Domino's Brand Color ───────────────────────────────────────────────────────
+DOMINOS_BLUE = "#006491"
 
-SEV_COLORS = {
-    1: "#cce8f4",
-    2: "#80c5e8",
-    3: BLUE,
-    4: "#8c0a1c",
-    5: RED,
-}
-
-# ── Custom CSS ────────────────────────────────────────────────────────────────
-st.markdown(f"""
-<style>
-    .section-header {{
-        font-size: 17px; font-weight: 700; color: {BLUE};
-        border-left: 4px solid {RED}; padding-left: 10px;
-        margin: 24px 0 12px 0;
-    }}
-    div[data-testid="stMetric"] {{
-        background: #f2f8fc; border-radius: 10px; padding: 12px 16px;
-        border-top: 3px solid {BLUE};
-    }}
-</style>
-""", unsafe_allow_html=True)
-
-
-# ── Data loading ──────────────────────────────────────────────────────────────
+# ── Data ──────────────────────────────────────────────────────────────────────
 @st.cache_data
 def load_data():
     incidents = pd.read_excel("data/restaurant_supply_chain_dashboard.xlsx", sheet_name="Incidents")
     workers   = pd.read_excel("data/restaurant_supply_chain_dashboard.xlsx", sheet_name="Workers")
 
-    incidents["DateOpened"]   = pd.to_datetime(incidents["DateOpened"])
-    incidents["StatusDate"]   = pd.to_datetime(incidents["StatusDate"])
-    incidents["SLABreached"]  = incidents["HoursOpen"] > incidents["SLA_Hours"]
+    incidents["DateOpened"] = pd.to_datetime(incidents["DateOpened"], errors="coerce")
+    incidents["StatusDate"] = pd.to_datetime(incidents["StatusDate"], errors="coerce")
 
-    # Hours open = time between DateOpened and StatusDate
     incidents["HoursToClose"] = (
         (incidents["StatusDate"] - incidents["DateOpened"]).dt.total_seconds() / 3600
     ).clip(lower=0)
 
-    merged = incidents.merge(workers, on="EmployeeId", how="left")
-    return incidents, workers, merged
+    incidents["SLABreached"] = incidents["HoursToClose"] > incidents["SLA_Hours"]
 
+    return incidents.merge(workers, on="EmployeeId", how="left")
 
-incidents, workers, merged = load_data()
+df_full = load_data()
+
+if df_full.empty:
+    st.warning("No data available.")
+    st.stop()
+
+df_full["YearMonth"] = df_full["DateOpened"].dt.to_period("M")
 
 # ── Header ────────────────────────────────────────────────────────────────────
-st.markdown("# Supply Chain Incident Breakdown")
-st.markdown("---")
+st.title("Supply Chain Incidents")
 
-# ── Top-of-page filters ───────────────────────────────────────────────────────
-
-# ── Top-of-page filters ───────────────────────────────────────────────────────
-st.markdown('<div class="section-header">Filters</div>', unsafe_allow_html=True)
-
-# Row 1: Region, Case Status, Date Range, Trend Aggregation
-fc1, fc2, fc3, fc4 = st.columns([1.5, 1.5, 2, 1.5])
+# ── Filters ───────────────────────────────────────────────────────────────────
+fc1, fc2, fc3 = st.columns(3)
 
 with fc1:
-    regions = ["All"] + sorted(incidents["RestaurantRegion"].dropna().unique())
-    sel_region = st.selectbox("Region", regions)
+    sel_region = st.selectbox("Region", ["All"] + sorted(df_full["RestaurantRegion"].dropna().unique()))
 
 with fc2:
-    statuses = ["All"] + sorted(incidents["CaseStatus"].dropna().unique())
-    sel_status = st.selectbox("Case Status", statuses)
+    sel_status = st.selectbox("Case Status", ["All"] + sorted(df_full["CaseStatus"].dropna().unique()))
 
 with fc3:
-    date_min = incidents["DateOpened"].min().date()
-    date_max = incidents["DateOpened"].max().date()
-    sel_dates = st.date_input("Date Range", value=(date_min, date_max),
-                              min_value=date_min, max_value=date_max)
+    months = sorted(df_full["YearMonth"].dropna().unique(), reverse=True)
+    sel_months = st.multiselect("Month", months, default=[months[0]] if months else [])
 
-with fc4:
-    sel_agg = st.selectbox("Trend Aggregation", ["Week", "Month", "Quarter"], index=1)
-
-# Row 2: Product Category, Incident Type, Severity
-fr2_c1, fr2_c2, fr2_c3 = st.columns([1.5, 1.5, 1.5])
+fr2_c1, fr2_c2, fr2_c3 = st.columns(3)
 
 with fr2_c1:
-    categories = ["All"] + sorted(incidents["ProductCategory"].dropna().unique())
-    sel_category = st.selectbox("Product Category", categories)
+    sel_category = st.selectbox("Product Category", ["All"] + sorted(df_full["ProductCategory"].dropna().unique()))
 
 with fr2_c2:
-    incident_types = ["All"] + sorted(incidents["IncidentType"].dropna().unique())
-    sel_type = st.selectbox("Incident Type", incident_types)
+    sel_type = st.selectbox("Incident Type", ["All"] + sorted(df_full["IncidentType"].dropna().unique()))
 
 with fr2_c3:
-    severities = sorted(incidents["SeverityLevel"].dropna().unique())
-    sel_sev = st.multiselect("Severity Level", severities, default=list(severities))
+    sev_options = sorted(df_full["SeverityLevel"].dropna().unique())
+    sel_sev = st.multiselect("Severity Level", sev_options, default=sev_options)
 
-st.markdown("---")
+# ── Apply Filters ─────────────────────────────────────────────────────────────
+df = df_full.copy()
 
-# ── Apply filters ─────────────────────────────────────────────────────────────
-df = merged.copy()
 if sel_region != "All":
     df = df[df["RestaurantRegion"] == sel_region]
 if sel_status != "All":
@@ -119,284 +75,319 @@ if sel_type != "All":
     df = df[df["IncidentType"] == sel_type]
 if sel_sev:
     df = df[df["SeverityLevel"].isin(sel_sev)]
-if len(sel_dates) == 2:
-    df = df[(df["DateOpened"].dt.date >= sel_dates[0]) &
-            (df["DateOpened"].dt.date <= sel_dates[1])]
+if sel_months:
+    df = df[df["YearMonth"].isin(sel_months)]
 
-st.markdown(f"Showing **{len(df):,}** incidents · Data through **{df['DateOpened'].max().strftime('%b %Y') if not df.empty else 'N/A'}**")
+st.markdown(f"Showing **{len(df):,}** incidents")
 
-# ── KPI row ───────────────────────────────────────────────────────────────────
-k1, k2, k3, k4, k5 = st.columns(5)
+# ── Monthly baseline (UNFILTERED for MoM) ─────────────────────────────────────
+monthly = (
+    df_full.groupby("YearMonth")
+    .agg(
+        Incidents=("CaseId", "count"),
+        TotalImpact=("FinancialImpact", "sum"),
+        AvgHours=("HoursToClose", "mean"),
+        SLABreach=("SLABreached", "mean"),
+        Escalation=("EscalatedFlag", "mean"),
+    )
+    .sort_index()
+)
+
+monthly["ImpactPerIncident"] = monthly["TotalImpact"] / monthly["Incidents"]
+
+def mom(series):
+    return series.iloc[-1] - series.iloc[-2] if len(series) > 1 else 0
+
+# ── KPI Delta Color Helper ─────────────────────────────────────────────────────
+# For most KPIs: higher = worse → delta_color="inverse" (red for positive delta)
+# For SLA Breach Rate: we want normal Streamlit behavior (also inverse — high breach = bad)
+# Streamlit delta_color options: "normal" (green=up), "inverse" (red=up), "off"
+
+# ── KPIs ──────────────────────────────────────────────────────────────────────
+st.markdown("## Key Metrics")
+
+k1, k2, k3, k4, k5, k6 = st.columns(6)
 
 total_incidents = len(df)
-total_impact    = df["FinancialImpact"].sum()
-avg_hrs_close   = df["HoursToClose"].mean() if not df.empty else 0
-sla_breach_rate = df["SLABreached"].mean() * 100 if not df.empty else 0
-escalation_rate = df["EscalatedFlag"].mean() * 100 if not df.empty else 0
+total_impact = df["FinancialImpact"].sum()
+impact_per_incident = total_impact / total_incidents if total_incidents else 0
 
-with k1:
-    st.metric("Total Incidents", f"{total_incidents:,}")
-with k2:
-    st.metric("Total Financial Impact", f"${total_impact / 1_000_000:.1f}M")
-with k3:
-    st.metric("Avg Hours Open", f"{avg_hrs_close:.0f} hrs")
-with k4:
-    st.metric("SLA Breach Rate", f"{sla_breach_rate:.1f}%")
-with k5:
-    st.metric("Escalation Rate", f"{escalation_rate:.1f}%")
+sla_rate = df["SLABreached"].mean() * 100 if not df.empty else 0
+avg_hours = df["HoursToClose"].mean() if not df.empty else 0
+esc_rate = df["EscalatedFlag"].mean() * 100 if not df.empty else 0
+
+# Total Incidents: more incidents = bad → inverse
+k1.metric(
+    "Total Incidents",
+    f"{total_incidents:,}",
+    delta=f"{mom(monthly['Incidents']):,.0f}",
+    delta_color="inverse"
+)
+
+# Total Financial Impact: higher cost = bad → inverse
+k2.metric(
+    "Total Financial Impact",
+    f"${total_impact:,.0f}",
+    delta=f"${mom(monthly['TotalImpact']):,.0f}",
+    delta_color="inverse"
+)
+
+# Impact per Incident: higher = bad → inverse
+k3.metric(
+    "Impact per Incident",
+    f"${impact_per_incident:,.0f}",
+    delta=f"${mom(monthly['ImpactPerIncident']):,.0f}",
+    delta_color="inverse"
+)
+
+# SLA Breach Rate: keep default behavior (no override — higher breach rate is bad,
+# so "inverse" also applies, but the prompt says to leave this one as-is / opposite of the others)
+k4.metric(
+    "SLA Breach Rate",
+    f"{sla_rate:.1f}%",
+    delta=f"{mom(monthly['SLABreach']):.1%}",
+    delta_color="normal"
+)
+
+# Avg Hours to Close: longer = bad → inverse
+k5.metric(
+    "Average Hours to Close",
+    f"{avg_hours:.1f}",
+    delta=f"{mom(monthly['AvgHours']):.1f}",
+    delta_color="inverse"
+)
+
+# Escalation Rate: higher = bad → inverse
+k6.metric(
+    "Escalation Rate",
+    f"{esc_rate:.1f}%",
+    delta=f"{mom(monthly['Escalation']):.1%}",
+    delta_color="inverse"
+)
+
+# ── Actionable Insight Banner ─────────────────────────────────────────────────
+st.markdown("---")
+
+if not df.empty:
+    top_vendor = df.groupby("VendorName")["FinancialImpact"].sum().idxmax()
+    top_vendor_impact = df.groupby("VendorName")["FinancialImpact"].sum().max()
+    top_region = df.groupby("RestaurantRegion")["CaseId"].count().idxmax()
+    top_incident_type = df.groupby("IncidentType")["CaseId"].count().idxmax()
+    breach_pct = df["SLABreached"].mean() * 100
+    top_sev = df[df["SeverityLevel"] == df["SeverityLevel"].max()] if "SeverityLevel" in df.columns else pd.DataFrame()
+
+    insights = []
+
+    if top_vendor:
+        insights.append(f"**Vendor Risk:** **{top_vendor}** accounts for **${top_vendor_impact:,.0f}** in financial impact — consider contract review or alternate sourcing.")
+
+    if top_region:
+        region_count = df.groupby("RestaurantRegion")["CaseId"].count()[top_region]
+        insights.append(f"**Regional Hotspot:** **{top_region}** leads with **{region_count:,}** incidents — prioritize field team review or supplier audit in this area.")
+        
+    if top_incident_type:
+        type_count = df.groupby("IncidentType")["CaseId"].count()[top_incident_type]
+        insights.append(f"**Recurring Pattern:** **{top_incident_type}** is the most frequent incident type (**{type_count:,}** cases) — root cause analysis recommended.")
+
+    if insights:
+        st.markdown("### Insights")
+        for insight in insights:
+            st.info(insight)
 
 st.markdown("---")
 
+# ── Trends ────────────────────────────────────────────────────────────────────
+st.markdown("### Incident Trends")
 
-# ── Row 1: Stacked trend + Incident Type breakdown ────────────────────────────
-st.markdown('<div class="section-header">Incident Trends</div>', unsafe_allow_html=True)
-col1, col2 = st.columns([3, 2])
+monthly_plot = monthly.reset_index()
+monthly_plot["Month"] = monthly_plot["YearMonth"].astype(str)
+
+fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+fig.add_bar(
+    x=monthly_plot["Month"],
+    y=monthly_plot["Incidents"],
+    name="Incidents",
+    marker_color=DOMINOS_BLUE
+)
+
+fig.add_scatter(
+    x=monthly_plot["Month"],
+    y=monthly_plot["TotalImpact"],
+    name="Financial Impact",
+    secondary_y=True,
+    line=dict(color="red", width=2),
+    marker=dict(color="red")
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+# ── Vendor + Impact ───────────────────────────────────────────────────────────
+st.markdown("### Vendor and Financial Impact")
+
+col1, col2 = st.columns(2)
+
+# Continuous blues: light (#c6dbef) → Domino's blue (#006491) → deep navy (#003152)
+BLUES_CONTINUOUS = [[0.0, "#c6dbef"], [0.5, "#006491"], [1.0, "#003152"]]
+
+def blues_for_categories(n):
+    """Return n evenly spaced hex colors sampled from the continuous blue scale."""
+    import plotly.colors as pc
+    if n == 1:
+        return ["#006491"]
+    scale_colors = ["#c6dbef", "#6baed6", "#2171b5", "#006491", "#084594", "#003152"]
+    sampled = pc.sample_colorscale(
+        [[i / (len(scale_colors) - 1), c] for i, c in enumerate(scale_colors)],
+        [i / (n - 1) for i in range(n)]
+    )
+    return sampled
+
+vendor_stacked = (
+    df.groupby(["VendorName", "ProductCategory"], as_index=False)["FinancialImpact"].sum()
+)
+
+vendor_order = (
+    vendor_stacked.groupby("VendorName")["FinancialImpact"]
+    .sum()
+    .sort_values()
+    .index.tolist()
+)
+
+categories = sorted(vendor_stacked["ProductCategory"].dropna().unique())
+cat_colors = blues_for_categories(len(categories))
+color_map = {cat: cat_colors[i] for i, cat in enumerate(categories)}
 
 with col1:
-    if sel_agg == "Week":
-        df["PeriodKey"] = df["DateOpened"].dt.to_period("W").apply(lambda p: str(p.start_time.date()))
-        xlabel = "Week Starting"
-    elif sel_agg == "Quarter":
-        df["PeriodKey"] = df["DateOpened"].dt.to_period("Q").astype(str)
-        xlabel = "Quarter"
-    else:
-        df["PeriodKey"] = df["DateOpened"].dt.strftime("%Y-%m")
-        xlabel = "Month"
-
-    sev_trend = (
-        df.groupby(["PeriodKey", "SeverityLevel"])
-        .size()
-        .reset_index(name="Count")
-        .sort_values(["PeriodKey", "SeverityLevel"])
+    fig_vendor = px.bar(
+        vendor_stacked,
+        x="FinancialImpact",
+        y="VendorName",
+        color="ProductCategory",
+        orientation="h",
+        category_orders={"VendorName": vendor_order},
+        color_discrete_map=color_map,
+        labels={"FinancialImpact": "Financial Impact", "VendorName": "Vendor", "ProductCategory": "Product Category"},
+        title="Financial Impact by Vendor & Product Category"
     )
-    period_totals = sev_trend.groupby("PeriodKey")["Count"].sum().reset_index(name="Total")
-
-    impact_trend = (
-        df.groupby("PeriodKey")["FinancialImpact"].sum().reset_index()
-        .sort_values("PeriodKey")
-    )
-
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
-
-    for sev in sorted(df["SeverityLevel"].unique()):
-        sub = sev_trend[sev_trend["SeverityLevel"] == sev].merge(period_totals, on="PeriodKey")
-        fig.add_trace(
-            go.Bar(
-                x=sub["PeriodKey"],
-                y=sub["Count"],
-                name=f"Severity {sev}",
-                marker_color=SEV_COLORS.get(sev, BLUE),
-                customdata=sub[["Total"]],
-                hovertemplate=(
-                    f"<b>Severity {sev}</b><br>"
-                    "%{x}<br>"
-                    "Severity Count: %{y}<br>"
-                    "Period Total: %{customdata[0]}<extra></extra>"
-                ),
-            ),
-            secondary_y=False,
-        )
-
-    fig.add_trace(
-        go.Scatter(
-            x=impact_trend["PeriodKey"],
-            y=impact_trend["FinancialImpact"],
-            name="Financial Impact ($)",
-            line=dict(color=RED2, width=2),
-            mode="lines+markers",
-            hovertemplate="%{x}<br>Impact: $%{y:,.0f}<extra></extra>",
-        ),
-        secondary_y=True,
-    )
-
-    fig.update_layout(
-        title=f"{sel_agg}ly Incidents & Financial Impact",
-        barmode="stack",
-        height=360,
-        plot_bgcolor=WHITE,
-        paper_bgcolor=WHITE,
-        legend=dict(orientation="h", y=1.14),
-        xaxis=dict(tickangle=-45, title=xlabel),
-    )
-    fig.update_yaxes(title_text="# Incidents", secondary_y=False)
-    fig.update_yaxes(title_text="Financial Impact ($)", secondary_y=True)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig_vendor, use_container_width=True)
 
 with col2:
-    sev_type = (
-        df.groupby(["IncidentType", "SeverityLevel"])["FinancialImpact"]
-        .sum()
-        .reset_index()
-        .sort_values(["IncidentType", "SeverityLevel"])
+    fig_hist = px.histogram(
+        df,
+        x="FinancialImpact",
+        labels={"FinancialImpact": "Financial Impact"},
+        title="Financial Impact Distribution"
     )
-    type_totals = sev_type.groupby("IncidentType")["FinancialImpact"].sum().reset_index(name="TypeTotal")
-    sev_type = sev_type.merge(type_totals, on="IncidentType").sort_values("TypeTotal", ascending=True)
+    fig_hist.update_traces(marker_color=DOMINOS_BLUE)
+    st.plotly_chart(fig_hist, use_container_width=True)
 
-    fig2 = go.Figure()
-    for sev in sorted(sev_type["SeverityLevel"].unique()):
-        sub = sev_type[sev_type["SeverityLevel"] == sev]
-        fig2.add_trace(go.Bar(
-            x=sub["FinancialImpact"],
-            y=sub["IncidentType"],
-            name=f"Severity {sev}",
-            orientation="h",
-            marker_color=SEV_COLORS.get(sev, BLUE),
-            customdata=sub[["TypeTotal"]],
-            hovertemplate=(
-                f"<b>Severity {sev}</b><br>"
-                "%{y}<br>"
-                "Severity Impact: $%{x:,.0f}<br>"
-                "Type Total: $%{customdata[0]:,.0f}<extra></extra>"
-            ),
-        ))
+# ── Heatmap ───────────────────────────────────────────────────────────────────
+st.markdown("### Incidents by Region and Type")
 
-    fig2.update_layout(
-        barmode="stack",
-        title="Financial Impact by Incident Type",
-        height=360,
-        plot_bgcolor=WHITE,
-        paper_bgcolor=WHITE,
-        legend=dict(orientation="h", y=1.12, font=dict(size=10)),
-        xaxis=dict(title="Total Impact ($)", tickprefix="$", tickformat=",.0f"),
-        yaxis=dict(title=""),
+heat = (
+    df.groupby(["RestaurantRegion", "IncidentType"])
+    .agg(
+        Count=("CaseId", "count"),
+        AvgImpact=("FinancialImpact", "mean")
     )
-    st.plotly_chart(fig2, use_container_width=True)
-
-
-# ── Row 2: Region heatmap ─────────────────────────────────────────────────────
-st.markdown('<div class="section-header">Incidents by Region</div>', unsafe_allow_html=True)
-heat_data  = df.groupby(["RestaurantRegion", "IncidentType"]).size().reset_index(name="Count")
-heat_pivot = heat_data.pivot(index="RestaurantRegion", columns="IncidentType", values="Count").fillna(0)
-fig3 = px.imshow(
-    heat_pivot, text_auto=True, aspect="auto",
-    color_continuous_scale=[[0, WHITE], [0.5, "#80c5e8"], [1, BLUE]],
-    title="Incident Count: Region x Type",
-)
-fig3.update_layout(height=300, plot_bgcolor=WHITE, paper_bgcolor=WHITE)
-st.plotly_chart(fig3, use_container_width=True)
-
-
-# ── Row 3: Vendor — Top 5 and Bottom 5 ───────────────────────────────────────
-st.markdown('<div class="section-header">Vendor Performance</div>', unsafe_allow_html=True)
-col5, col6 = st.columns(2)
-
-vendor_all = (
-    df.groupby("VendorName")
-    .agg(Count=("CaseId", "count"), TotalLoss=("FinancialImpact", "sum"))
     .reset_index()
-    .sort_values("TotalLoss", ascending=False)
 )
 
-with col5:
-    top5 = vendor_all.head(5).sort_values("TotalLoss", ascending=True)
-    fig5 = px.bar(
-        top5, x="TotalLoss", y="VendorName", orientation="h",
-        title="Top 5 Vendors by Total Loss",
-        color="TotalLoss",
-        color_continuous_scale=[[0, "#cce8f4"], [0.5, BLUE], [1, "#004d70"]],
-        labels={"TotalLoss": "Total Loss ($)", "VendorName": ""},
-        text="TotalLoss",
+pivot_impact = heat.pivot(index="RestaurantRegion", columns="IncidentType", values="AvgImpact").fillna(0)
+pivot_count  = heat.pivot(index="RestaurantRegion", columns="IncidentType", values="Count").fillna(0)
+
+# Build custom hover text: avg impact + incident count
+hover_text = []
+for region in pivot_impact.index:
+    row = []
+    for itype in pivot_impact.columns:
+        avg_imp = pivot_impact.loc[region, itype]
+        cnt = int(pivot_count.loc[region, itype]) if region in pivot_count.index and itype in pivot_count.columns else 0
+        row.append(f"Region: {region}<br>Type: {itype}<br>Avg Impact: ${avg_imp:,.0f}<br>Incidents: {cnt:,}")
+    hover_text.append(row)
+
+fig_heat = px.imshow(
+    pivot_impact,
+    color_continuous_scale="RdBu_r",
+    aspect="auto",
+    labels=dict(
+        x="Incident Type",
+        y="Restaurant Region",
+        color="Average Financial Impact"
+    ),
+    title="Average Financial Impact by Region & Incident Type"
+)
+
+fig_heat.update_traces(
+    customdata=pivot_count.values,
+    hovertemplate=(
+        "<b>%{y}</b> — %{x}<br>"
+        "Avg Financial Impact: $%{z:,.0f}<br>"
+        "Incidents: %{customdata:,}<extra></extra>"
     )
-    fig5.update_traces(texttemplate="$%{text:,.0f}", textposition="outside")
-    fig5.update_layout(height=320, plot_bgcolor=WHITE, paper_bgcolor=WHITE,
-                       coloraxis_showscale=False)
-    st.plotly_chart(fig5, use_container_width=True)
+)
 
-with col6:
-    bot5 = vendor_all.tail(5).sort_values("TotalLoss", ascending=True)
-    fig6 = px.bar(
-        bot5, x="TotalLoss", y="VendorName", orientation="h",
-        title="Bottom 5 Vendors by Total Loss",
-        color="TotalLoss",
-        color_continuous_scale=[[0, "#fce8eb"], [0.5, RED2], [1, "#8c0a1c"]],
-        labels={"TotalLoss": "Total Loss ($)", "VendorName": ""},
-        text="TotalLoss",
-    )
-    fig6.update_traces(texttemplate="$%{text:,.0f}", textposition="outside")
-    fig6.update_layout(height=320, plot_bgcolor=WHITE, paper_bgcolor=WHITE,
-                       coloraxis_showscale=False)
-    st.plotly_chart(fig6, use_container_width=True)
+st.plotly_chart(fig_heat, use_container_width=True)
 
+# ── Resolution (stacked) ──────────────────────────────────────────────────────
+st.markdown("### Hours to Close by Incident Type")
 
-# ── Row 4: Avg Hours Open by Incident Type ────────────────────────────────────
-st.markdown('<div class="section-header">Resolution Time</div>', unsafe_allow_html=True)
-
-avg_hours = (
-    df.groupby("IncidentType")["HoursToClose"]
+stack = (
+    df.groupby(["IncidentType", "Team"])["HoursToClose"]
     .mean()
     .reset_index()
-    .rename(columns={"HoursToClose": "AvgHoursOpen"})
-    .sort_values("AvgHoursOpen", ascending=True)
 )
-fig_hrs = px.bar(
-    avg_hours, x="AvgHoursOpen", y="IncidentType", orientation="h",
-    title="Avg Hours Open by Incident Type",
-    color="AvgHoursOpen",
-    color_continuous_scale=[[0, "#cce8f4"], [0.5, BLUE], [1, "#004d70"]],
-    labels={"AvgHoursOpen": "Avg Hours Open", "IncidentType": ""},
-    text="AvgHoursOpen",
+
+teams = sorted(stack["Team"].dropna().unique())
+team_colors = blues_for_categories(len(teams))
+team_color_map = {team: team_colors[i] for i, team in enumerate(teams)}
+
+fig_stack = px.bar(
+    stack,
+    x="HoursToClose",
+    y="IncidentType",
+    color="Team",
+    orientation="h",
+    color_discrete_map=team_color_map,
+    labels={
+        "HoursToClose": "Average Hours to Close",
+        "IncidentType": "Incident Type",
+        "Team": "Team"
+    },
+    title="Average Resolution Time by Incident Type & Team"
 )
-fig_hrs.update_traces(texttemplate="%{text:.0f} hrs", textposition="outside")
-fig_hrs.update_layout(height=340, plot_bgcolor=WHITE, paper_bgcolor=WHITE,
-                      coloraxis_showscale=False)
-st.plotly_chart(fig_hrs, use_container_width=True)
 
+st.plotly_chart(fig_stack, use_container_width=True)
 
-# ── Row 5: Team / Worker performance ─────────────────────────────────────────
-st.markdown('<div class="section-header">Team & Worker Performance</div>', unsafe_allow_html=True)
-col8, col9 = st.columns(2)
+# ── Escalation Rate by Severity ───────────────────────────────────────────────
+st.markdown("### Escalation Rate by Severity Level")
 
-with col8:
-    team_perf = df.groupby("Team").agg(
-        Incidents=("CaseId", "count"),
-        AvgHours=("HoursToClose", "mean"),
+esc_sev = (
+    df.groupby("SeverityLevel")
+    .agg(
         EscalationRate=("EscalatedFlag", "mean"),
-    ).reset_index()
-
-    fig8 = go.Figure()
-    for m, c in zip(["Incidents", "AvgHours", "EscalationRate"], [BLUE, "#80c5e8", RED]):
-        norm = (team_perf[m] - team_perf[m].min()) / (team_perf[m].max() - team_perf[m].min() + 1e-9)
-        fig8.add_trace(go.Bar(name=m, x=team_perf["Team"], y=norm,
-                              marker_color=c, opacity=0.9))
-    fig8.update_layout(
-        barmode="group", title="Team KPIs (normalised)",
-        height=320, plot_bgcolor=WHITE, paper_bgcolor=WHITE,
-        legend=dict(orientation="h", y=1.1),
+        Incidents=("CaseId", "count")
     )
-    st.plotly_chart(fig8, use_container_width=True)
+    .reset_index()
+)
+esc_sev["EscalationRate"] = esc_sev["EscalationRate"] * 100
+esc_sev = esc_sev.sort_values("SeverityLevel")
 
-with col9:
-    top_workers = (
-        df.groupby(["EmployeeName", "JobTitle"])
-        .agg(Incidents=("CaseId", "count"), TotalImpact=("FinancialImpact", "sum"))
-        .reset_index()
-        .sort_values("TotalImpact", ascending=False)
-        .head(10)
-    )
-    top_workers["TotalImpact"] = top_workers["TotalImpact"].map("${:,.0f}".format)
+fig_esc = px.bar(
+    esc_sev,
+    x="SeverityLevel",
+    y="EscalationRate",
+    color="EscalationRate",
+    color_continuous_scale=BLUES_CONTINUOUS,
+    labels={"EscalationRate": "Escalation Rate (%)", "SeverityLevel": "Severity Level"},
+    title="Escalation Rate by Severity — Are High-Severity Cases Being Properly Routed?",
+    hover_data={"Incidents": True}
+)
+fig_esc.update_coloraxes(showscale=False)
+st.plotly_chart(fig_esc, use_container_width=True)
 
-    st.markdown("**Top 10 Employees by Cases Handled (Financial Impact)**")
-    st.dataframe(
-        top_workers.rename(columns={
-            "EmployeeName": "Employee", "JobTitle": "Title",
-            "Incidents": "# Cases", "TotalImpact": "Total Impact",
-        }),
-        hide_index=True, use_container_width=True, height=295,
-    )
+# ── Raw Data ──────────────────────────────────────────────────────────────────
+st.markdown("### Raw Data")
 
-
-# ── Raw data explorer ─────────────────────────────────────────────────────────
-with st.expander("Raw Data Explorer"):
-    st.dataframe(
-        df[["CaseId", "DateOpened", "IncidentType", "RestaurantRegion", "CaseStatus",
-            "SeverityLevel", "FinancialImpact", "HoursOpen", "HoursToClose",
-            "SLABreached", "VendorName", "ProductCategory", "RootCause",
-            "EscalatedFlag", "EmployeeName", "Team"]]
-        .sort_values("DateOpened", ascending=False),
-        hide_index=True, use_container_width=True, height=350,
-    )
-    csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button("Download filtered CSV", csv, "filtered_incidents.csv", "text/csv")
-
-st.markdown("---")
-st.caption("Restaurant Supply Chain Dashboard · Built with Streamlit & Plotly")
+with st.expander("View Data"):
+    st.dataframe(df, use_container_width=True)
